@@ -12,9 +12,10 @@ COPY --from=composer /usr/bin/composer /usr/local/bin/composer
 WORKDIR /var/www/html
 RUN composer create-project --repository-url=https://mirror.mage-os.org/ \
       magento/project-community-edition=${MAGENTO_VERSION} . --no-install --no-interaction \
-    && composer config repositories.0 composer https://mirror.mage-os.org/ \
-    && composer install --no-interaction --prefer-dist --no-progress
-COPY magento/app/code/Local/ErpConnector /var/www/html/app/code/Local/ErpConnector
+    && composer config repositories.0 composer https://mirror.mage-os.org/
+COPY src/composer.json src/composer.lock /var/www/html/
+RUN composer install --no-interaction --prefer-dist --no-progress
+COPY src/app/code/Local/ErpConnector /var/www/html/app/code/Local/ErpConnector
 COPY docker/php.ini /usr/local/etc/php/conf.d/magento.ini
 COPY docker/fpm.conf /usr/local/etc/php-fpm.d/zz-local.conf
 COPY docker/entrypoint.sh /usr/local/bin/magento-entrypoint

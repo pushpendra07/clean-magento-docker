@@ -1,0 +1,8 @@
+/*
+!/.gitignore
+!/composer.json
+!/composer.lock
+!/app/
+/app/*
+!/app/code/
+!/app/design/

@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+bin/setup
+host_uid=$(id -u)
+host_gid=$(id -g)
+if [ "$host_uid" -eq 0 ]; then echo 'Run bin/dev as your normal host user, not root.' >&2; exit 2; fi
+
+DEV_UID="$host_uid" DEV_GID="$host_gid" docker compose -f compose.yaml -f compose.dev.yaml config --quiet
+
+if [ ! -f src/.dev-source-ready ] || [ ! -f src/vendor/autoload.php ]; then
+    echo 'Building the application images and preparing local Magento source...'
+    docker compose -f compose.yaml build init nginx erp
+    # Preserve the existing store: copy its configuration/media from the base volumes.
+    docker compose -f compose.yaml stop varnish nginx php cron
+    docker compose -f compose.yaml run --rm --no-deps --user root --entrypoint bash \
+      -e DEV_UID="$host_uid" -e DEV_GID="$host_gid" \
+      -v "$PWD/src:/development" init -c '
+        cp -an /var/www/html/. /development/
+        test -f /development/vendor/autoload.php
+        test -f /development/bin/magento
+        touch /development/.dev-source-ready
+        chown -R "$DEV_UID:$DEV_GID" /development
+      '
+fi
+
+# Docker Compose reads these settings automatically for all existing helpers.
+for setting in "COMPOSE_FILE=compose.yaml:compose.dev.yaml" "DEV_UID=$host_uid" "DEV_GID=$host_gid"; do
+    key=${setting%%=*}
+    value=${setting#*=}
+    umask 077
+    awk -v key="$key" -v value="$value" '
+      BEGIN {seen=0}
+      index($0,key "=")==1 {print key "=" value; seen=1; next}
+      {print}
+      END {if(!seen)print key "=" value}
+    ' .env > .env.dev-tmp
+    mv .env.dev-tmp .env
+done
+
+docker compose -f compose.yaml -f compose.dev.yaml up -d --wait --wait-timeout 2400
+echo 'Development stack ready. Open src in your IDE; vendor is at src/vendor.'

@@ -1,0 +1,41 @@
+# Docker Compose 2.24.4+; bin/dev prepares src and selects both Compose files.
+x-dev-environment: &dev-environment
+  DEV_UID: ${DEV_UID:?Run bin/dev first}
+  DEV_GID: ${DEV_GID:?Run bin/dev first}
+  COMPOSER_HOME: /tmp/composer
+
+services:
+  init:
+    environment: *dev-environment
+    volumes: !override
+      - ./src:/var/www/html
+      - varnish-config:/varnish
+      - ./docker/php-dev.ini:/usr/local/etc/php/conf.d/zz-dev.ini:ro
+
+  php:
+    environment: *dev-environment
+    volumes: !override
+      - ./src:/var/www/html
+      - varnish-config:/varnish
+      - ./docker/php-dev.ini:/usr/local/etc/php/conf.d/zz-dev.ini:ro
+
+  cron:
+    environment: *dev-environment
+    volumes: !override
+      - ./src:/var/www/html
+      - varnish-config:/varnish
+      - ./docker/php-dev.ini:/usr/local/etc/php/conf.d/zz-dev.ini:ro
+
+  nginx:
+    depends_on:
+      php:
+        condition: service_healthy
+        restart: true
+    volumes: !override
+      - ./src:/var/www/html:ro
+
+  varnish:
+    depends_on:
+      nginx:
+        condition: service_healthy
+        restart: true

@@ -1,9 +1,10 @@
 # Clean Magento Docker + basic ERP
 
-A new local development environment built from public base images and Magento source. It does not use the SellerRefund assignment images or data. The only custom Magento module is the small ERP connector in `magento/app/code/Local/ErpConnector`.
+A new local development environment built from public base images and Magento source. It does not use the SellerRefund assignment images or data. The only custom Magento module is the small ERP connector in `src/app/code/Local/ErpConnector`.
 
 ## Guide contents
 
+- [Development mode and PhpStorm](#development-mode-and-phpstorm)
 - [Fresh setup](#fresh-setup-run-these-steps-in-order)
 - [Daily start, stop and restart](#daily-start-stop-and-restart-commands)
 - [Magento and container commands](#run-magento-and-container-commands)
@@ -15,6 +16,7 @@ A new local development environment built from public base images and Magento so
 - [Reset to a fresh install](#reset-everything-to-a-fresh-installation)
 - [Build and publish images](#build-and-publish-your-own-images)
 - [Troubleshooting](#troubleshooting-commands)
+- [Reduce local disk usage](#reduce-local-disk-usage)
 - [Validation](#validation-commands)
 
 ## Components
@@ -83,7 +85,7 @@ pwd
 ls
 ```
 
-You should see `compose.yaml`, `Dockerfile`, `bin`, `docker`, `erp`, and `magento`.
+You should see `compose.yaml`, `Dockerfile`, `bin`, `docker`, `erp`, and `src`.
 
 ### 3. Create and edit local settings
 
@@ -135,10 +137,12 @@ Keep `.env` local and do not commit or share its values. `.env` and environment-
 
 ```bash
 docker compose config --quiet
-bin/start
+bin/dev
 ```
 
-No output from `config --quiet` means the Compose configuration is valid. `bin/start` builds the Magento PHP, Nginx and ERP images, starts the infrastructure, installs Magento into the empty database, configures the cache engine, generates static assets and Varnish configuration, and waits for the stack to become ready.
+This starts the IDE-friendly development mode. For image-only use, run `bin/start` instead; vendor then stays inside the image.
+
+No output from `config --quiet` means the Compose configuration is valid. `bin/dev` builds the Magento PHP, Nginx and ERP images, prepares the local `src` tree (including vendor), starts the infrastructure, installs Magento into the empty database, configures the cache engine, generates static assets and Varnish configuration, and waits for the stack to become ready.
 
 The first run can take several minutes. Keep this terminal open until it finishes. In a **second terminal**, enter the same project directory and watch installation:
 
@@ -149,7 +153,7 @@ docker compose logs -f init
 
 If you cloned elsewhere, replace that `cd` path with your project's location. Press **Ctrl+C** to stop following logs; the containers keep running.
 
-To run the same build/start steps explicitly instead of using `bin/start`:
+For the image-only alternative on a fresh clone, these explicit commands are equivalent to `bin/start`. They do not prepare the development source tree:
 
 ```bash
 bin/setup
@@ -191,7 +195,8 @@ Run these from the project directory. All commands here preserve named volumes a
 | Task | Command |
 |---|---|
 | Start after `bin/stop`, using existing images | `docker compose up -d --wait --wait-timeout 2400` |
-| Build changed source and start | `bin/start` |
+| Start/resume IDE development | `bin/dev` |
+| Rebuild images and start the selected mode | `bin/start` |
 | Stop and remove project containers/network | `bin/stop` |
 | Pause all project containers without removing them | `docker compose stop` |
 | Resume paused containers | `docker compose start` |
@@ -272,46 +277,101 @@ docker compose logs --tail=100 cron
 
 Magento's configured cron runner starts its queue consumers. ERP delivery in this starter uses HTTP directly, not a RabbitMQ consumer.
 
-## Inspect Magento vendor files
+## Development mode and PhpStorm
 
-Composer installs Magento dependencies inside the PHP image at `/var/www/html/vendor`. They are not downloaded into a `vendor` directory on your computer. Start the stack, then run these commands from the project directory.
+Use development mode for daily Magento work. It stores the full Magento tree on your computer in `src`, including `src/vendor`, and bind-mounts the same tree into PHP, Nginx, cron and the installer. Code edits are visible without rebuilding images. This requires Docker Compose 2.24.4 or later.
 
-List the installed packages and Magento modules:
+From the repository root:
 
 ```bash
-docker compose exec -u www-data php ls -la vendor
-docker compose exec -u www-data php ls vendor/magento
-docker compose exec -u www-data php composer show magento/product-community-edition
+bin/setup
+bin/dev
 ```
 
-Open a shell to browse the source:
+On the first run, `bin/dev` builds the images, copies Magento and its dependencies into `src`, and preserves existing files such as your custom modules. For an existing image-based store, it also imports the current configuration, media and runtime files from its named volumes. It stops web requests/cron during this import; the database is preserved. A fresh clone gets a fresh Magento installation.
+
+The helper saves `COMPOSE_FILE=compose.yaml:compose.dev.yaml` and your user/group IDs in the ignored `.env`. All normal `docker compose`, `bin/magento`, `bin/composer`, `bin/stop` and cache-switch commands then use the development mounts automatically. Subsequent `bin/dev` calls reuse local source and images. After Dockerfile/PHP-extension changes, run `docker compose build init nginx` before restarting the stack.
+
+```text
+clean-magento-docker/
+├── compose.yaml
+├── compose.dev.yaml
+├── Dockerfile
+└── src/
+    ├── composer.json        # tracked
+    ├── composer.lock        # tracked
+    ├── app/code/            # tracked custom modules
+    ├── app/design/          # tracked custom themes
+    ├── vendor/              # local dependencies, ignored by Git
+    ├── app/etc/env.php      # local Magento configuration, ignored
+    ├── generated/           # ignored
+    ├── var/                 # ignored
+    └── pub/                 # generated/core files and media, ignored
+```
+
+`src/.gitignore` keeps the downloaded Magento tree and local credentials out of Git while allowing Composer files and custom code/themes. Runtime source and credentials are also excluded from the Docker build context. Do not delete `src` to restart the store: in development mode it contains your active configuration and media. `docker compose down --volumes` does not delete these host files. Keep using development mode for that store; switching back to the base file alone would use the older named-volume configuration/media.
+
+### Open and configure PhpStorm
+
+1. Open **`src`** as the PhpStorm project. Wait for indexing. `vendor` is now a real local directory; Composer packages can also appear under External Libraries.
+2. In **Settings → Build, Execution, Deployment → Docker**, add/test your Docker Desktop or OrbStack connection.
+3. In **Settings → PHP**, add a CLI interpreter from **Docker Compose**. Select `../compose.yaml` and `../compose.dev.yaml`, service **`php`**, executable **`/usr/local/bin/php`**, and use the existing running container.
+4. Map the local `src` directory to **`/var/www/html`**. Set the PHP language level to **8.5**.
+5. In **Settings → PHP → Composer**, select local `composer.json`, the Docker interpreter, and Composer executable **`/usr/local/bin/composer`**.
+6. If using PHPUnit, select the same interpreter and `/var/www/html/vendor/autoload.php` as the Composer autoloader.
+7. Exclude `var`, `generated`, `pub/static` and `pub/media` from indexing. Keep vendor available as Composer library sources.
+
+The commands in this README run from the **repository root**, one directory above `src`. If PhpStorm's terminal opens in `src`, run `cd ..` first. Other IDEs can open `src` directly because every dependency is present locally. Xdebug is not installed by this change; code browsing, CLI execution and tests work without it.
+
+### Daily development commands
 
 ```bash
+bin/dev
+bin/magento cache:flush
+bin/magento indexer:reindex
+bin/composer install
+bin/composer show magento/product-community-edition
+bin/stop
+```
+
+Run `composer install` through the helper so Composer uses the container's PHP version and updates local `src/vendor`. Commit intentional changes to `src/composer.json` and `src/composer.lock`; never commit vendor. Avoid editing vendor files as the permanent fix; use custom modules or managed patches.
+
+| Change | Development command |
+|---|---|
+| PHP logic in a custom module | Save and refresh; flush Magento cache if the response is cached |
+| Templates or configuration XML | `bin/magento cache:flush` |
+| Dependency injection / constructors | Remove affected generated factories/proxies/interceptors, then `bin/magento cache:clean` |
+| New module | `bin/magento module:enable Vendor_Module`, then `bin/magento setup:upgrade` |
+| Database schema | `bin/magento setup:upgrade` |
+| Theme JS/CSS/LESS | Remove the affected generated static assets, then hard-reload the browser; developer mode regenerates them |
+
+In developer mode, generated classes and static assets are created on demand. Do not routinely run `setup:di:compile` or `setup:static-content:deploy`; use those for deployment/build workflows. After a constructor change, remove the affected files under `src/generated/code` so Magento regenerates them. See [Adobe development recommendations](https://experienceleague.adobe.com/en/docs/commerce-operations/performance-best-practices/development-environment).
+
+### Inspect Magento vendor files
+
+After `bin/dev`, browse `src/vendor/magento` directly in your IDE. You can still inspect the same files through Docker:
+
+```bash
+ls src/vendor/magento
+bin/composer show magento/product-community-edition
 docker compose exec -u www-data php bash
+```
+
+Inside the container:
+
+```bash
 cd /var/www/html
-ls vendor/magento/module-catalog
 cat vendor/magento/module-page-cache/etc/module.xml
 exit
 ```
 
-Read a file directly without opening a shell:
-
-```bash
-docker compose exec -T php cat vendor/magento/module-page-cache/etc/module.xml
-```
-
-To inspect a module in your host editor, copy that module to a directory outside the repository:
-
-```bash
-mkdir -p ../magento-vendor-inspection
-docker compose cp php:/var/www/html/vendor/magento/module-catalog ../magento-vendor-inspection/
-```
-
-The copied directory is a snapshot for inspection; editing it does not change the running store. Edits made directly inside a container disappear when that container is replaced. Implement changes in a custom module under `magento/app/code` and rebuild the images so changes are reproducible.
+In the original image-only mode, vendor remains inside the image; `bin/dev` is what makes it local and shared.
 
 ## Edit code and rebuild images
 
-Application code is copied into images; it is not bind-mounted from your computer. After changing the Magento connector or Docker/PHP/Nginx configuration:
+In development mode, edit custom modules under `src/app/code` and themes under `src/app/design`. Changes use the live mounts described above.
+
+In the base image-only mode, application code is copied into images. After editing custom code or Docker/PHP/Nginx configuration, rebuild and restart:
 
 ```bash
 bin/stop
@@ -320,19 +380,7 @@ docker compose up -d --wait --wait-timeout 2400
 bin/magento cache:flush
 ```
 
-For changes to module declarations, dependency injection, or database schema, run the appropriate Magento update after the rebuilt stack starts:
-
-```bash
-bin/magento setup:upgrade
-bin/magento setup:di:compile
-bin/magento cache:flush
-```
-
-For theme/static asset changes, regenerate assets:
-
-```bash
-bin/magento setup:static-content:deploy -f en_US
-```
+The image build installs dependencies from the committed `src/composer.lock`. To change dependencies, run Composer inside the development container and commit both Composer files. If changing the Magento release, update the Composer requirement/lock file and image release setting together; this starter does not automate existing-store version upgrades.
 
 After changing only the ERP server or dashboard:
 
@@ -340,8 +388,6 @@ After changing only the ERP server or dashboard:
 docker compose build erp
 docker compose up -d --no-deps --wait erp
 ```
-
-These rebuilds retain existing store and ERP data. Changing `MAGENTO_VERSION` is not an automated upgrade procedure; this starter's initialization is designed for fresh installs.
 
 ## Choose Redis or Valkey
 
@@ -473,7 +519,7 @@ docker compose up -d --wait --wait-timeout 2400
 
 ## Reset everything to a fresh installation
 
-**Destructive: this deletes this Compose project's Magento database, media, deployment configuration, Redis/Valkey data, RabbitMQ data, and ERP database.** It also removes the users, products, orders and integration requests you created. Back up anything you need before running it. These are instructions only; do not run them for a normal restart.
+**Destructive, image-only mode:** this procedure deletes this Compose project's Magento database, media, deployment configuration, Redis/Valkey data, RabbitMQ data, and ERP database.** It also removes the users, products, orders and integration requests you created. Back up anything you need before running it. These are instructions only; do not run them for a normal restart.
 
 From the correct project directory, with the same `COMPOSE_PROJECT_NAME` used to create your store:
 
@@ -482,7 +528,9 @@ docker compose down --volumes --remove-orphans
 bin/start
 ```
 
-The next start installs a clean store using the current `.env` settings. Keep `.env` if you want the same ports/passwords, or edit it before `bin/start`. Existing images are reused unless source changes require a rebuild.
+This reset procedure applies to image-only mode. In development mode, `src/app/etc`, media and other local files survive volume removal; do not use this as a fresh-store reset. Back up your local source/configuration/media and create a separate clone with a different Compose project name for a clean development store.
+
+In image-only mode, the next start installs a clean store using the current `.env` settings. Keep `.env` if you want the same ports/passwords, or edit it before `bin/start`. Existing images are reused unless source changes require a rebuild.
 
 ## Build and publish your own images
 
@@ -537,7 +585,7 @@ docker compose pull
 docker compose up -d --no-build --wait --wait-timeout 2400
 ```
 
-Use these explicit commands rather than `bin/start` when you want to run published images without rebuilding. The init service still installs a new store into empty volumes. Builds target the host architecture; multi-architecture publication requires a buildx pipeline. Dependency resolution happens during the image build; the Magento release is pinned, but transitive Composer dependencies are not committed as a lockfile in this starter.
+Use these explicit commands rather than `bin/start` when you want to run published images without rebuilding. The init service still installs a new store into empty volumes. Builds target the host architecture; multi-architecture publication requires a buildx pipeline. The image build installs the pinned Magento release and dependencies from the committed Composer lock file.
 
 ## Troubleshooting commands
 
@@ -550,7 +598,7 @@ Use these explicit commands rather than `bin/start` when you want to run publish
 | OpenSearch is unhealthy | Run `docker compose logs --tail=100 search`; check Docker RAM and Linux `vm.max_map_count` |
 | Storefront is unavailable | Run `docker compose ps -a` and `docker compose logs --tail=100 php nginx varnish` |
 | ERP request failed | Inspect the ERP dashboard, `docker compose logs --tail=100 erp`, and Magento `var/log/system.log` |
-| Shell says a helper is not executable | Run `chmod +x bin/setup bin/start bin/stop bin/magento bin/switch-cache` |
+| Shell says a helper is not executable | Run `chmod +x bin/setup bin/start bin/dev bin/stop bin/magento bin/composer bin/switch-cache` |
 
 After fixing the underlying problem, retry:
 
@@ -560,13 +608,31 @@ bin/start
 
 If `setup:install` itself was interrupted, it may leave partial database/configuration state. Use the reset procedure only if you want to discard that installation's data. An `init` status of **Exited (0)** is normal.
 
+## Reduce local disk usage
+
+Inspect your current usage:
+
+```bash
+du -sh src
+du -sh src/vendor
+docker system df
+```
+
+After builds complete, remove unused build cache if you need space:
+
+```bash
+docker builder prune -a
+```
+
+Review Docker's confirmation before approving. This removes unused build cache; later image rebuilds can take longer. It does not remove the running images, store volumes or local `src/vendor`. Keep vendor locally for IDE indexing. Avoid volume-pruning/reset commands when you want to preserve store data. Counts from `docker system df` include other Docker projects on the same machine.
+
 ## Validation commands
 
 Run from the project directory. The first three checks do not create store data:
 
 ```bash
 docker compose config --quiet
-bash -n bin/setup bin/start bin/stop bin/magento bin/switch-cache docker/entrypoint.sh docker/configure-cache.sh
+bash -n bin/setup bin/start bin/dev bin/stop bin/magento bin/composer bin/switch-cache docker/entrypoint.sh docker/configure-cache.sh
 python3 -m unittest discover -s erp/tests -v
 ```
 
@@ -594,3 +660,5 @@ bin/switch-cache valkey
 ```
 
 Verified locally on Apple Silicon: all three custom images build, Magento installs from an empty database, the storefront/Admin/phpMyAdmin return HTTP 200, and all configured healthchecks pass. Both cache-switching commands complete successfully. ERP logic tests and HTTP checks cover pending/accept/fail behavior, authorization and updates without duplicate entities. A Magento smoke check delivered product, customer and order changes to ERP, then removed its temporary records. The default running configuration was restored to Valkey.
+
+Development mode was also verified with a local vendor tree, live host edits visible in PHP/Nginx, container-created files owned by the host user, writable Composer files, a warm restart without another source copy, preserved store encryption/database configuration, and successful storefront/ERP health requests.

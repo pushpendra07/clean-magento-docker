@@ -4,3 +4,15 @@
 !.env.example
 auth.json
 README.md
+src/*
+!src/composer.json
+!src/composer.lock
+!src/app
+src/app/*
+!src/app/code
+!src/app/design
+.idea
+.vscode
+**/auth.json
+**/.env
+**/__pycache__

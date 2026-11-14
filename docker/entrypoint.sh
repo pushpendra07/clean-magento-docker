@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd /var/www/html
+# In development, keep PHP-created bind-mounted files owned by the host user.
+if [ -n "${DEV_UID:-}" ]; then
+    case "$DEV_UID:${DEV_GID:-}" in *[!0-9:]*|:*) echo 'DEV_UID and DEV_GID must be numeric' >&2; exit 2;; esac
+    if [ "$DEV_UID" -eq 0 ] || [ -z "${DEV_GID:-}" ]; then
+        echo 'Development mode requires a non-root host user and DEV_GID.' >&2; exit 2
+    fi
+    if ! getent group "$DEV_GID" >/dev/null; then groupadd -g "$DEV_GID" magento-dev; fi
+    if [ "$(id -u www-data)" != "$DEV_UID" ] || [ "$(id -g www-data)" != "$DEV_GID" ]; then
+        usermod -u "$DEV_UID" -g "$DEV_GID" www-data
+    fi
+fi
 if [ "${1:-}" != install ]; then
     if [ "${1:-}" = php-fpm ]; then exec docker-php-entrypoint "$@"; fi
     exec gosu www-data "$@"
