@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+umask 077
+if [ ! -f .env ]; then cp .env.example .env; fi
+chmod 600 .env
+for key in DB_PASSWORD DB_ROOT_PASSWORD ADMIN_PASSWORD RABBITMQ_PASSWORD ERP_API_TOKEN; do
+    existing=$(awk -v key="$key" 'index($0,key "=")==1 {print substr($0,length(key)+2); exit}' .env)
+    if [ -n "$existing" ]; then continue; fi
+    if ! command -v openssl >/dev/null 2>&1; then
+        echo 'OpenSSL is required to generate local credentials. Install openssl and rerun bin/setup.' >&2
+        exit 1
+    fi
+    value=$(openssl rand -hex 24)
+    if [ "$key" = ADMIN_PASSWORD ]; then value="A9a!$value"; fi
+    temp_file=$(mktemp "${TMPDIR:-/tmp}/clean-magento-env.XXXXXX")
+    trap 'rm -f "$temp_file"' EXIT
+    awk -v key="$key" -v value="$value" '
+        BEGIN {seen=0}
+        index($0,key "=")==1 {print key "=" value; seen=1; next}
+        {print}
+        END {if(!seen) print key "=" value}
+    ' .env > "$temp_file"
+    cat "$temp_file" > .env
+    rm -f "$temp_file"
+    trap - EXIT
+done
+echo 'Local settings ready in .env. Generated credentials are not printed or tracked by Git.'

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+bin/setup
+# Build dependency images first so services sharing the PHP image can start.
+docker compose build init nginx erp
+docker compose up -d --wait --wait-timeout 2400
+echo "Stack ready. See .env and README.md for URLs and credentials."

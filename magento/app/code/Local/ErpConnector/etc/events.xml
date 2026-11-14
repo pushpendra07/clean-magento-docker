@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="urn:magento:framework:Event/etc/events.xsd">
+    <event name="catalog_product_save_commit_after"><observer name="local_erp_product" instance="Local\ErpConnector\Observer\Sync"/></event>
+    <event name="customer_save_commit_after"><observer name="local_erp_customer" instance="Local\ErpConnector\Observer\Sync"/></event>
+    <event name="sales_order_save_commit_after"><observer name="local_erp_order" instance="Local\ErpConnector\Observer\Sync"/></event>
+</config>

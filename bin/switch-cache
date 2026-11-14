@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+engine=${1:-}
+case "$engine" in redis|valkey) ;; *) echo 'Usage: bin/switch-cache redis|valkey' >&2; exit 2;; esac
+# Stop requests and cron while updating the shared deployment configuration.
+docker compose stop varnish nginx cron php
+if docker compose run --rm --no-deps -e CACHE_ENGINE="$engine" init bash -c '
+    cp app/etc/env.php app/etc/env.php.cache-backup
+    if configure-cache; then
+        rm app/etc/env.php.cache-backup
+    else
+        mv app/etc/env.php.cache-backup app/etc/env.php
+        exit 1
+    fi
+'; then
+    awk -v engine="$engine" 'BEGIN{seen=0} /^CACHE_ENGINE=/{print "CACHE_ENGINE=" engine; seen=1; next} {print} END{if(!seen)print "CACHE_ENGINE=" engine}' .env > .env.cache-tmp
+    mv .env.cache-tmp .env
+    # Recreate dependents too: Nginx must resolve the new PHP container address.
+    docker compose up -d --force-recreate --wait --wait-timeout 600 php nginx varnish cron
+else
+    docker compose start php nginx varnish cron
+    echo 'Cache switch failed; the previous Magento configuration was restored.' >&2
+    exit 1
+fi

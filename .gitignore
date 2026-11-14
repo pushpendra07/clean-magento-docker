@@ -1,0 +1,10 @@
+.env
+.DS_Store
+auth.json
+__pycache__/
+*.pyc
+.env.cache-tmp
+.env.*
+!.env.example
+*.pem
+*.key
